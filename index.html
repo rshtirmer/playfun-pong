@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pong - Play.fun</title>
+    <script src="https://sdk.play.fun/"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #0a0a0a;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        font-family: 'Courier New', monospace;
+        overflow: hidden;
+      }
+
+      #game-wrapper {
+        position: relative;
+      }
+
+      canvas {
+        display: block;
+        border: 2px solid #333;
+        border-radius: 4px;
+      }
+
+      #overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        background: rgba(0, 0, 0, 0.75);
+        color: #fff;
+        z-index: 10;
+      }
+
+      #overlay.hidden {
+        display: none;
+      }
+
+      #overlay h1 {
+        font-size: 48px;
+        margin-bottom: 12px;
+        color: #00ff88;
+        text-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+      }
+
+      #overlay p {
+        font-size: 18px;
+        color: #aaa;
+        margin-bottom: 8px;
+      }
+
+      #overlay .score-display {
+        font-size: 24px;
+        color: #fff;
+        margin: 16px 0;
+      }
+
+      #overlay button {
+        margin-top: 20px;
+        padding: 12px 32px;
+        font-size: 18px;
+        font-family: 'Courier New', monospace;
+        background: #00ff88;
+        color: #0a0a0a;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+
+      #overlay button:hover {
+        background: #00cc6a;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game-wrapper">
+      <canvas id="game" width="800" height="500"></canvas>
+      <div id="overlay">
+        <h1>PONG</h1>
+        <p>Player vs AI</p>
+        <p>Use mouse or arrow keys to move your paddle</p>
+        <p>First to 5 wins!</p>
+        <button id="start-btn">Start Game</button>
+      </div>
+    </div>
+
+    <script>
+      // ─── Play.fun SDK Setup (defensive pattern from production games) ───
+      let sdk = null;
+      let sdkReady = false;
+
+      if (typeof OpenGameSDK !== 'undefined') {
+        try {
+          sdk = new OpenGameSDK({
+            ui: { usePointsWidget: true },
+          });
+
+          sdk.on('OnReady', () => {
+            sdkReady = true;
+            console.log('Play.fun SDK ready');
+          });
+
+          sdk.on('error', (err) => {
+            console.error('Play.fun SDK error:', err);
+          });
+
+          sdk.init({ gameId: 'pong-example' });
+        } catch (e) {
+          console.warn('Play.fun SDK init failed:', e);
+        }
+      } else {
+        console.warn('Play.fun SDK not loaded — running without it');
+      }
+
+      function pfAddPoints(points) {
+        if (sdk && sdkReady && points > 0) {
+          try {
+            sdk.addPoints(points);
+          } catch (e) {
+            console.warn('addPoints failed:', e);
+          }
+        }
+      }
+
+      function pfSavePoints() {
+        if (sdk && sdkReady) {
+          try {
+            sdk.savePoints();
+          } catch (e) {
+            console.warn('savePoints failed:', e);
+          }
+        }
+      }
+
+      // ─── Game Constants ───
+      const canvas = document.getElementById('game');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width;
+      const H = canvas.height;
+
+      const PADDLE_W = 12;
+      const PADDLE_H = 80;
+      const BALL_SIZE = 10;
+      const WINNING_SCORE = 5;
+      const BALL_SPEED_INITIAL = 5;
+      const BALL_SPEED_INCREMENT = 0.3;
+      const AI_SPEED = 3.5;
+      const PADDLE_SPEED = 7;
+
+      // ─── Game State ───
+      let playerY = H / 2 - PADDLE_H / 2;
+      let aiY = H / 2 - PADDLE_H / 2;
+      let ballX, ballY, ballVX, ballVY;
+      let playerScore = 0;
+      let aiScore = 0;
+      let totalPoints = 0;
+      let running = false;
+      let useMouseControl = false;
+      let keysDown = {};
+
+      const overlay = document.getElementById('overlay');
+      const startBtn = document.getElementById('start-btn');
+
+      // ─── Ball Reset ───
+      function resetBall(direction) {
+        ballX = W / 2;
+        ballY = H / 2;
+        const angle = (Math.random() * Math.PI) / 4 - Math.PI / 8; // slight random angle
+        const speed = BALL_SPEED_INITIAL;
+        ballVX = Math.cos(angle) * speed * direction;
+        ballVY = Math.sin(angle) * speed;
+      }
+
+      // ─── Start / Restart ───
+      function startGame() {
+        playerScore = 0;
+        aiScore = 0;
+        totalPoints = 0;
+        playerY = H / 2 - PADDLE_H / 2;
+        aiY = H / 2 - PADDLE_H / 2;
+        resetBall(1);
+        overlay.classList.add('hidden');
+        running = true;
+        requestAnimationFrame(gameLoop);
+      }
+
+      function showGameOver(winner) {
+        running = false;
+        pfSavePoints();
+
+        overlay.classList.remove('hidden');
+        overlay.innerHTML = `
+          <h1>${winner === 'player' ? 'YOU WIN!' : 'AI WINS'}</h1>
+          <div class="score-display">${playerScore} — ${aiScore}</div>
+          <p>Points earned: ${totalPoints}</p>
+          <button id="start-btn">Play Again</button>
+        `;
+        document.getElementById('start-btn').addEventListener('click', startGame);
+      }
+
+      // ─── Input ───
+      canvas.addEventListener('mousemove', (e) => {
+        if (!running) return;
+        useMouseControl = true;
+        const rect = canvas.getBoundingClientRect();
+        const mouseY = e.clientY - rect.top;
+        playerY = Math.max(0, Math.min(H - PADDLE_H, mouseY - PADDLE_H / 2));
+      });
+
+      document.addEventListener('keydown', (e) => {
+        keysDown[e.key] = true;
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          useMouseControl = false;
+          e.preventDefault();
+        }
+      });
+
+      document.addEventListener('keyup', (e) => {
+        keysDown[e.key] = false;
+      });
+
+      // ─── Update ───
+      function update() {
+        // Player keyboard movement
+        if (!useMouseControl) {
+          if (keysDown['ArrowUp']) playerY = Math.max(0, playerY - PADDLE_SPEED);
+          if (keysDown['ArrowDown'])
+            playerY = Math.min(H - PADDLE_H, playerY + PADDLE_SPEED);
+        }
+
+        // AI movement — tracks ball with slight delay
+        const aiCenter = aiY + PADDLE_H / 2;
+        const diff = ballY - aiCenter;
+        if (Math.abs(diff) > 4) {
+          aiY += Math.sign(diff) * Math.min(AI_SPEED, Math.abs(diff));
+        }
+        aiY = Math.max(0, Math.min(H - PADDLE_H, aiY));
+
+        // Ball movement
+        ballX += ballVX;
+        ballY += ballVY;
+
+        // Top / bottom bounce
+        if (ballY - BALL_SIZE / 2 <= 0) {
+          ballY = BALL_SIZE / 2;
+          ballVY = Math.abs(ballVY);
+        }
+        if (ballY + BALL_SIZE / 2 >= H) {
+          ballY = H - BALL_SIZE / 2;
+          ballVY = -Math.abs(ballVY);
+        }
+
+        // Player paddle collision (left side)
+        if (
+          ballVX < 0 &&
+          ballX - BALL_SIZE / 2 <= 20 + PADDLE_W &&
+          ballX - BALL_SIZE / 2 >= 20 &&
+          ballY >= playerY &&
+          ballY <= playerY + PADDLE_H
+        ) {
+          ballX = 20 + PADDLE_W + BALL_SIZE / 2;
+          const hitPos = (ballY - playerY) / PADDLE_H - 0.5; // -0.5 to 0.5
+          const angle = hitPos * (Math.PI / 3); // up to 60°
+          const speed = Math.sqrt(ballVX * ballVX + ballVY * ballVY) + BALL_SPEED_INCREMENT;
+          ballVX = Math.cos(angle) * speed;
+          ballVY = Math.sin(angle) * speed;
+        }
+
+        // AI paddle collision (right side)
+        if (
+          ballVX > 0 &&
+          ballX + BALL_SIZE / 2 >= W - 20 - PADDLE_W &&
+          ballX + BALL_SIZE / 2 <= W - 20 &&
+          ballY >= aiY &&
+          ballY <= aiY + PADDLE_H
+        ) {
+          ballX = W - 20 - PADDLE_W - BALL_SIZE / 2;
+          const hitPos = (ballY - aiY) / PADDLE_H - 0.5;
+          const angle = Math.PI - hitPos * (Math.PI / 3);
+          const speed = Math.sqrt(ballVX * ballVX + ballVY * ballVY) + BALL_SPEED_INCREMENT;
+          ballVX = -Math.abs(Math.cos(angle) * speed);
+          ballVY = Math.sin(angle) * speed;
+        }
+
+        // Scoring
+        if (ballX < 0) {
+          aiScore++;
+          if (aiScore >= WINNING_SCORE) return showGameOver('ai');
+          resetBall(1);
+        }
+
+        if (ballX > W) {
+          playerScore++;
+          const pts = 10;
+          totalPoints += pts;
+          pfAddPoints(pts);
+          if (playerScore >= WINNING_SCORE) return showGameOver('player');
+          resetBall(-1);
+        }
+      }
+
+      // ─── Draw ───
+      function draw() {
+        // Background
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(0, 0, W, H);
+
+        // Center dashed line
+        ctx.setLineDash([8, 8]);
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(W / 2, 0);
+        ctx.lineTo(W / 2, H);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Scores
+        ctx.fillStyle = '#444';
+        ctx.font = '64px Courier New';
+        ctx.textAlign = 'center';
+        ctx.fillText(playerScore, W / 4, 70);
+        ctx.fillText(aiScore, (3 * W) / 4, 70);
+
+        // Labels
+        ctx.fillStyle = '#333';
+        ctx.font = '14px Courier New';
+        ctx.fillText('YOU', W / 4, 90);
+        ctx.fillText('AI', (3 * W) / 4, 90);
+
+        // Player paddle (left, green)
+        ctx.fillStyle = '#00ff88';
+        ctx.shadowColor = 'rgba(0, 255, 136, 0.4)';
+        ctx.shadowBlur = 10;
+        ctx.fillRect(20, playerY, PADDLE_W, PADDLE_H);
+        ctx.shadowBlur = 0;
+
+        // AI paddle (right, red)
+        ctx.fillStyle = '#ff4466';
+        ctx.shadowColor = 'rgba(255, 68, 102, 0.4)';
+        ctx.shadowBlur = 10;
+        ctx.fillRect(W - 20 - PADDLE_W, aiY, PADDLE_W, PADDLE_H);
+        ctx.shadowBlur = 0;
+
+        // Ball
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.arc(ballX, ballY, BALL_SIZE / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Points earned indicator
+        if (totalPoints > 0) {
+          ctx.fillStyle = '#00ff88';
+          ctx.font = '12px Courier New';
+          ctx.textAlign = 'left';
+          ctx.fillText(`+${totalPoints} pts`, 10, H - 10);
+        }
+      }
+
+      // ─── Game Loop ───
+      function gameLoop() {
+        if (!running) return;
+        update();
+        if (!running) return; // game might have ended in update()
+        draw();
+        requestAnimationFrame(gameLoop);
+      }
+
+      // ─── Auto-save every 30s ───
+      setInterval(pfSavePoints, 30000);
+
+      // ─── Save on page close ───
+      window.addEventListener('beforeunload', pfSavePoints);
+
+      // ─── Init ───
+      startBtn.addEventListener('click', startGame);
+
+      // Draw initial frame
+      draw();
+    </script>
+  </body>
+</html>
