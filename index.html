@@ -160,7 +160,9 @@
       const WINNING_SCORE = 5;
       const BALL_SPEED_INITIAL = 5;
       const BALL_SPEED_INCREMENT = 0.3;
-      const AI_SPEED = 3.5;
+      const AI_SPEED = 2.8;
+      const AI_REACTION_DISTANCE = W * 0.6; // AI only reacts when ball is on its side
+      const AI_ERROR_MARGIN = 30; // AI aims slightly off-center
       const PADDLE_SPEED = 7;
 
       // ─── Game State ───
@@ -244,11 +246,21 @@
             playerY = Math.min(H - PADDLE_H, playerY + PADDLE_SPEED);
         }
 
-        // AI movement — tracks ball with slight delay
+        // AI movement — imperfect tracking with reaction zone and error
         const aiCenter = aiY + PADDLE_H / 2;
-        const diff = ballY - aiCenter;
-        if (Math.abs(diff) > 4) {
-          aiY += Math.sign(diff) * Math.min(AI_SPEED, Math.abs(diff));
+        if (ballVX > 0 && ballX > AI_REACTION_DISTANCE) {
+          // Ball coming toward AI and close enough — track with offset error
+          const target = ballY + (Math.random() - 0.5) * AI_ERROR_MARGIN;
+          const diff = target - aiCenter;
+          if (Math.abs(diff) > 10) {
+            aiY += Math.sign(diff) * Math.min(AI_SPEED, Math.abs(diff));
+          }
+        } else if (ballVX < 0) {
+          // Ball going away — drift lazily toward center
+          const diff = H / 2 - aiCenter;
+          if (Math.abs(diff) > 20) {
+            aiY += Math.sign(diff) * 1.2;
+          }
         }
         aiY = Math.max(0, Math.min(H - PADDLE_H, aiY));
 
